@@ -1,0 +1,25 @@
+# Kaggle Datasets and heavy files
+*.csv
+*.pt
+*.pth
+*.npz
+*.npy
+*.dcm
+*.jpg
+*.png
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.ipynb_checkpoints/
+.env
+venv/
+env/
+
+# IDEs
+.vscode/
+.idea/
+
+# Ignore Kaggle output directories if any large files exist there
+outputs/*.pth
