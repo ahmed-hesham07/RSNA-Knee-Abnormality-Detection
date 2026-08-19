@@ -1,32 +1,104 @@
-# RSNA Knee Abnormality Detection: DINOv2 Solution
+# RSNA Knee Abnormality Detection: Multi-Planar DINOv2 Solution
 
-This repository contains a full 5-Fold Cross Validation pipeline for the [RSNA Knee Abnormality Detection](https://www.kaggle.com/competitions/rsna-knee-abnormality-detection) competition on Kaggle.
+An end-to-end Grandmaster-grade deep learning solution for the **[RSNA Knee Abnormality Detection](https://www.kaggle.com/competitions/rsna-knee-abnormality-detection)** competition on Kaggle.
 
-## Overview
-The goal of this competition is to detect and classify 12 different knee abnormalities (e.g., ACL tears, Meniscus tears, Osteoarthritis) from multi-planar MRI scans. 
+---
 
-This solution uses a state-of-the-art **DINOv2** Vision Transformer backbone, fine-tuned using a highly optimized spatial cropping strategy and community-sourced soft labels.
+## 🔬 Architectural Overview
 
-## Core Methodology
+Knee MRI examinations are 3D multi-planar studies where specific pathologies are localized across distinct acquisition planes:
+- **Sagittal View (Fluid-Sensitive / T2)**: Ideal for Cruciate Ligaments (ACL/PCL), Joint Effusion, and Baker's Cysts.
+- **Coronal View (Fat-Suppressed)**: Ideal for Collateral Ligaments (MCL/LCL), Meniscal Tears, and Compartmental Osteoarthritis.
+- **Axial View**: Ideal for Patellofemoral Osteoarthritis, Cartilage Fissuring, and Bone Contusions.
 
-1. **Geometric DICOM Preprocessing**: Standard resizing destroys small focal lesions (1-3mm). Instead, we use a robust geometry engine (`ImagePositionPatient` & `ImageOrientationPatient`) to sort slices anatomically and extract a **130mm physical center-crop** to isolate the knee joint perfectly across all MRI machines and resolutions.
-2. **3-Slice RGB Triplets**: DINOv2 requires 3-channel (RGB) input. We sample 3 equidistant slices from the center of the crop to form an RGB volume, representing roughly 10mm of continuous physical tissue.
-3. **Soft LLM Labels for Regularization**: The official training data only contains 58 expert-labeled studies. We utilize soft probabilities (LLM-extracted from the radiology reports) for the remaining 4,400+ studies. These soft labels provide massive natural regularization (label smoothing) during training.
-4. **Intelligent Pooling Head**: We attach a simple `Max-Pooling` head to the DINOv2 backbone. Max-pooling naturally favors the detection of highly focal, isolated abnormalities (like a 2mm meniscus tear) across the input triplets.
-5. **5-Fold Stratified Ensembling**: The training loop utilizes `StratifiedGroupKFold` across 5 epochs per fold to guarantee even distribution and prevent patient leakage, resulting in 5 heavily generalized models.
+```
+       ┌───────────────────────┐
+       │   Knee MRI Study      │
+       └───────────┬───────────┘
+                   │
+    ┌──────────────┼──────────────┐
+    ▼              ▼              ▼
+[ Sagittal ]   [ Coronal ]    [ Axial ]
+ (3 Triplets)   (3 Triplets)  (3 Triplets)
+    │              │              │
+    └──────────────┼──────────────┘
+                   ▼
+  ┌─────────────────────────────────┐
+  │  Physical 130mm FOV Normalizer   │
+  └────────────────┬────────────────┘
+                   ▼
+  ┌─────────────────────────────────┐
+  │ DINOv2 Vision Transformer (timm)│
+  └────────────────┬────────────────┘
+                   ▼
+  ┌─────────────────────────────────┐
+  │ Cross-View Gated Attention Pool │
+  └────────────────┬────────────────┘
+                   ▼
+  ┌─────────────────────────────────┐
+  │   12 Abnormality Predictions    │
+  └─────────────────────────────────┘
+```
 
-## Repository Structure
-* `notebooks/RSNA_Knee_DINOv2_Baseline.ipynb`: The primary Kaggle Notebook containing the full training pipeline, DataLoaders, and execution loops.
-* `research-report.md`: Detailed technical analysis of the competition landscape, metric ceilings, and strategies employed by top Grandmasters.
+---
 
-## Usage
-1. Upload the `RSNA_Knee_DINOv2_Baseline.ipynb` notebook to Kaggle.
-2. Attach the official competition dataset.
-3. Attach the community dataset: `pilkwang/rsna-knee-llm-labels`.
-4. Attach the community dataset: `pilkwang/rsna-knee-weights` (for pre-trained initialization).
-5. Run the notebook to generate the 5 `.pth` model weights.
+## 🛠️ Key Technical Innovations
 
-## Requirements
-* `torch`, `torchvision`, `timm`
-* `pydicom`, `cv2`, `albumentations`
-* `pandas`, `scikit-learn`
+1. **Multi-Planar MRI Sequence Selector**:
+   - Intelligently queries `train_series.csv` / `test_series.csv` to select matching `Sagittal`, `Coronal`, and `Axial` series.
+   - Prioritizes `Fluid_Sensitive == 1` and `Fat_Suppression == 1` sequences for highest diagnostic contrast.
+
+2. **Physical Millimeter Geometry Normalization**:
+   - Uses `ImageOrientationPatient` and `ImagePositionPatient` vectors to project slices along the anatomical normal.
+   - Crops exact **130.0 mm physical Field of View (FOV)** using `PixelSpacing` metadata to ensure scale-invariance across scanner vendors (GE, Siemens, Philips).
+
+3. **Cross-View Gated Attention Transformer**:
+   - Embeds each planar triplet through a shared **DINOv2** backbone (`vit_small_patch14_reg4_dinov2.lvd142m` with `dynamic_img_size=True`).
+   - Learns attention weights across planes:
+     $$\mathbf{z}_{\text{fused}} = \sum_{v \in \{\text{Sag}, \text{Cor}, \text{Ax}\}} \alpha_v \cdot f(X_v)$$
+
+4. **Asymmetric Loss for Class Imbalance**:
+   - Implements Asymmetric Loss / Pos-Weighted BCE with soft labels extracted from radiology reports (`report_labels_v2.csv`) to regularize low-prevalence findings (e.g. Fractures, Synovitis).
+
+5. **Robust Offline Inference & Ensembling**:
+   - Zero-internet compliance on Kaggle.
+   - Dynamic path fallback resolving `test_series/` structures seamlessly.
+   - 5-Fold out-of-fold weight averaging with Test-Time Augmentation (TTA).
+
+---
+
+## 📁 Repository Structure
+
+```
+├── notebooks/
+│   ├── RSNA_Knee_MultiView_DINOv2_Training.ipynb   # SOTA Multi-Planar Training Pipeline
+│   ├── RSNA_Knee_MultiView_DINOv2_Inference.ipynb  # 5-Fold Multi-Planar Ensemble Inference
+│   ├── RSNA_Knee_DINOv2_Baseline.ipynb             # Single-Plane Baseline Training
+│   └── RSNA_Knee_DINOv2_Inference.ipynb            # Single-Plane Ensemble Inference
+├── generate_multiview_training_nb.py               # Generates the Multi-Planar Training Notebook
+├── generate_multiview_inference_nb.py              # Generates the Multi-Planar Inference Notebook
+├── generate_nb.py                                  # Baseline Generator
+├── generate_inference_nb.py                        # Baseline Inference Generator
+├── rsna-knee-competition.md                        # Official Competition Specification
+└── research-report.md                              # Deep-Dive Literature & Methodology Report
+```
+
+---
+
+## 🚀 Execution Instructions on Kaggle
+
+### 1. Training (Multi-Planar Model)
+1. Create a new Kaggle notebook and import [`notebooks/RSNA_Knee_MultiView_DINOv2_Training.ipynb`](file:///C:/Users/ahmed/projects/rsna/notebooks/RSNA_Knee_MultiView_DINOv2_Training.ipynb).
+2. Attach:
+   - Official Dataset: `rsna-knee-abnormality-detection`
+   - Community Labels: `pilkwang/rsna-knee-llm-labels`
+   - Pretrained Weights: `pilkwang/rsna-knee-weights`
+3. Run training across folds (or set `CFG.fold_to_train = 0..4`) to save best model checkpoints.
+
+### 2. Inference (Leaderboard Submission)
+1. Create a new Kaggle notebook and import [`notebooks/RSNA_Knee_MultiView_DINOv2_Inference.ipynb`](file:///C:/Users/ahmed/projects/rsna/notebooks/RSNA_Knee_MultiView_DINOv2_Inference.ipynb).
+2. Attach:
+   - Official Dataset: `rsna-knee-abnormality-detection`
+   - Your Trained Weights Dataset: `my-rsna-dino-weights` (containing your `.pth` files)
+3. Toggle **Internet OFF** in the right-side panel.
+4. Click **Save & Run All (Commit)** -> Go to Viewer -> Click **Submit to Competition**!
