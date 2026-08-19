@@ -124,9 +124,10 @@ notebook = {
    "outputs": [],
    "source": [
     "class RSNAKneeInferenceDataset(Dataset):\n",
-    "    def __init__(self, df, series_df):\n",
+    "    def __init__(self, df, series_df, id_col_name='row_id'):\n",
     "        self.df = df\n",
     "        self.series_df = series_df\n",
+    "        self.id_col_name = id_col_name\n",
     "        self.transform = A.Compose([A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225))])\n",
     "\n",
     "    def __len__(self):\n",
@@ -165,7 +166,7 @@ notebook = {
     "        while len(images) < num_triplets: images.append(torch.zeros((3, CFG.image_size, CFG.image_size)))\n",
     "        \n",
     "        images_tensor = torch.stack(images)\n",
-    "        return images_tensor, row['row_id'] if 'row_id' in row else str(study_id)\n"
+    "        return images_tensor, row[self.id_col_name] if self.id_col_name in row else str(study_id)\n"
    ]
   },
   {
@@ -203,12 +204,14 @@ notebook = {
     "        test_df = pd.read_csv(CFG.test_csv)\n",
     "        test_series_df = pd.read_csv(CFG.test_series)\n",
     "        sample_sub = pd.read_csv(f'{CFG.base_dir}/sample_submission.csv')\n",
+    "        id_col_name = sample_sub.columns[0]\n",
     "    except:\n",
     "        print(\"Running in fallback mode for notebook save\")\n",
     "        test_df = pd.DataFrame({'StudyInstanceUID': ['123'], 'row_id': ['123']})\n",
     "        test_series_df = pd.DataFrame({'StudyInstanceUID': ['123'], 'SeriesInstanceUID': ['456']})\n",
+    "        id_col_name = 'row_id'\n",
     "\n",
-    "    dataset = RSNAKneeInferenceDataset(test_df, test_series_df)\n",
+    "    dataset = RSNAKneeInferenceDataset(test_df, test_series_df, id_col_name=id_col_name)\n",
     "    dataloader = DataLoader(dataset, batch_size=CFG.batch_size, shuffle=False, num_workers=CFG.num_workers)\n",
     "    \n",
     "    models = []\n",
@@ -235,8 +238,8 @@ notebook = {
     "            \n",
     "    all_preds = np.vstack(all_preds) if all_preds else np.zeros((len(test_df), num_classes))\n",
     "    sub_df = pd.DataFrame(all_preds, columns=target_cols)\n",
-    "    sub_df['row_id'] = all_row_ids\n",
-    "    sub_df = sub_df[['row_id'] + target_cols]\n",
+    "    sub_df[id_col_name] = all_row_ids\n",
+    "    sub_df = sub_df[[id_col_name] + target_cols]\n",
     "    sub_df.to_csv('submission.csv', index=False)\n",
     "    return sub_df\n",
     "\n",
